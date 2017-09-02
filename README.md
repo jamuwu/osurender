@@ -4,10 +4,12 @@ Currently extremely WIP. Plans are to have the rendered mp4 look as if it were r
 Eventually at least.
 
 # Setup
-Run `pip3 install -r requirements.txt` in the directory after cloning this repo
-Also install [pyoppai](https://github.com/francesco149/oppai)
+Make sure you have matplotlib and [pyoppai](https://github.com/francesco149/oppai)
 
 # Usage
-Usage is as follows:
+Usage plans to be as follows:
 ```python render.py replay_name.osr```
 It gives the percentage of completion and how long it's been rendering the replay.
+However:
+```python render.py name```
+is what it needs currently, name being the shared name of the .osu and .osr (example.osu example.osr)
