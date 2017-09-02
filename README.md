@@ -13,3 +13,6 @@ It gives the percentage of completion and how long it's been rendering the repla
 However:
 ```python render.py name```
 is what it needs currently, name being the shared name of the .osu and .osr (example.osu example.osr)
+
+# Example
+Here's a video of the current result: https://youtu.be/4PXBLD8yeEo
