@@ -65,18 +65,23 @@ def pascal_row(n):
     return result
 
 def slider_end_time(obj):
-    # Ironic that I copied most of this function from pyttanko and does exactly what it tries not to do
+    # Used to be highly innacurate when I tried doing this myself
+    # Thanks to fmang for documenting how this is found.
+    # I think it's implemented properly but still feel it's a tad bit off.
+    # TODO test some more and find issues
     timings = bmap.timing_points
     for timing in timings:
         if obj.time >= timing.time:
             t = timing
             break
-    sv_multiplier = 1.0
-    if not t.change and t.ms_per_beat < 0:
-        sv_multiplier = (-100.0 / t.ms_per_beat)
-    px_per_beat = bmap.sv * 100.0 * sv_multiplier
-    beat_num = (obj.data.distance * obj.data.repetitions) / px_per_beat
-    return beat_num * t.ms_per_beat
+    return obj.data.distance / (100.0 * bmap.sv) * t.ms_per_beat # The actual 
+
+def slider_curve(red): # I'll work on this later to make it actually work in producing true slider paths
+    if   len(red) == 2: return red
+    #elif len(red) == 3: return perfect(red) # TODO implement this
+    else:
+        bezier = make_bezier(red)
+        return bezier(ts)
 
 def circlecalc(obj, offset:int):
     # I didn't want to type this twice lol
@@ -86,7 +91,8 @@ def circlecalc(obj, offset:int):
     y2 = (obj.data.pos.y + 20) + offset
     return (x1, x2, y1, y2)
 
-def parsePoints(points): # This doesn't look so good. TODO make this better
+def parsePoints(points): 
+    # This doesn't look so good. TODO make this better/more efficient
     temp, temps = [], []
     for i in range(len(points)):
         temp.append(points[i])
@@ -103,13 +109,13 @@ def createbuffer(i):
     buffer = []
     for obj in bmap.hitobjects:
         # this *should* identify whether the object should be shown or not
-        if obj.objtype & 1<<0 != 0:
+        if obj.objtype & 1<<0 != 0: # Circle
             if i >= obj.time - arms and i <= obj.time:
                 buffer.append(obj)
-        elif obj.objtype & 1<<1 != 0:
+        elif obj.objtype & 1<<1 != 0: # Slider
             if i >= obj.time - arms and i <= obj.time + int(slider_end_time(obj)):
                 buffer.append(obj)
-        elif obj.objtype & 1<<3 != 0:
+        elif obj.objtype & 1<<3 != 0: # Spinner
             if i >= obj.time and i <= obj.endtime:
                 buffer.append(obj)
     return buffer
@@ -136,19 +142,18 @@ for i in range(int((bmap.hitobjects[-1].time + 2000) / 20)):
     draw = ImageDraw.Draw(frame)
     buffer = createbuffer(i)
     for obj in buffer:
-        if obj.objtype & 1<<0 != 0:
+        if obj.objtype & 1<<0 != 0: # Circle
             draw.ellipse(circlecalc(obj, cspx / 2))
             draw.ellipse(circlecalc(obj, cspx / 2 + (cspx * .65)  * ((obj.time - i) / arms)))
-        elif obj.objtype & 1<<1 != 0:
+        elif obj.objtype & 1<<1 != 0: # Slider
             draw.ellipse(circlecalc(obj, cspx / 2))
             draw.ellipse(circlecalc(obj, max(cspx / 2 + (cspx * .65)  * ((obj.time - i) / arms), cspx / 2)))
             points = [(obj.data.pos.x + 20, obj.data.pos.y + 20)]
             points.extend([(int(point.split(':')[0]) + 20, int(point.split(':')[1]) + 20) for point in obj.data.points.split('|') if ':' in point])
             segments, slider = parsePoints(points), []
             for red in segments:
-                bezier = make_bezier(red)
-                draw.line(bezier(ts))#, width=int(cspx))
-        elif obj.objtype & 1<<3 != 0:
+                draw.line(slider_curve(red))
+        elif obj.objtype & 1<<3 != 0: # Spinner
             x, y = 276, 212
             draw.ellipse((x - 100, y - 100, x + 100, y + 100))
     frame.save('{}/{}.png'.format(dirname, str(int(i / 20)).zfill(8)))
@@ -157,5 +162,6 @@ for i in range(int((bmap.hitobjects[-1].time + 2000) / 20)):
 sys.stdout.write('Took {:.2f} seconds to finish.\n'.format(time.perf_counter() - start))
 
 # Since I want to use PIL and have no idea how to make a video from images in python
-# I'll use ffmpeg from command line for now, possibly indefinite.
+# Would love to learn of a way that doesn't require installing things like opencv
+# I'll use ffmpeg from command line for now, possibly for an indefinite amount of time.
 # ffmpeg -r 50 -f image2 -i maptitle/%08d.png -i mapaudio.mp3 -vcodec libx264 -crf 25 -pix_fmt yuv420p video.mp4
