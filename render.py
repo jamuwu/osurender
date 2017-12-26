@@ -40,6 +40,9 @@ if not os.path.exists(filename):
 bmap = pyttanko.parser().map(open(filename, encoding='utf-8'))
 stars = pyttanko.diff_calc().calc(bmap, mods=replay['mods_bitwise'])
 
+# This is to allow me to accurately draw key presses
+replay['replay_data'].reverse()
+
 # found this on reddit
 def cs_px(cs): return int(109 - 9 * cs)
 
@@ -52,12 +55,9 @@ def ar_ms(ar):
 # bezier code from https://stackoverflow.com/questions/246525/how-can-i-draw-a-bezier-curve-using-pythons-pil
 # literally don't ask me because I have no idea what it's doing lmao
 def make_bezier(xys):
-    # xys should be a sequence of 2-tuples (Bezier control points)
     n = len(xys)
     combinations = pascal_row(n-1)
     def bezier(ts):
-        # This uses the generalized formula for bezier curves
-        # http://en.wikipedia.org/wiki/B%C3%A9zier_curve#Generalization
         result = []
         for t in ts:
             tpowers = (t**i for i in range(n))
@@ -68,38 +68,58 @@ def make_bezier(xys):
         return result
     return bezier
 
+# Stolen from Sunpy, source is https://github.com/osufx/osu-parser/blob/master/osu_parser/curves.py#L124
+# Slightly modified as you can see, lol
+def perfect(p):
+    d = 2 * (p[0][0] * (p[1][1] - p[2][1]) + p[1][0] * (p[2][1] - p[0][1]) + p[2][0] * (p[0][1] - p[1][1]))
+    if d == 0:
+        # Perhaps this can be avoided? For now I'll return a bezier as that works
+        bezier = make_bezier(p)
+        return bezier(ts)
+    ux = ((pow(p[0][1], 2) + pow(p[0][1], 2)) * (p[1][1] - p[2][1]) + (pow(p[1][0], 2) + pow(p[1][1], 2)) * (p[2][1] - p[0][1]) + (pow(p[2][0], 2) + pow(p[2][1], 2)) * (p[0][1] - p[1][1])) / d
+    uy = ((pow(p[0][0], 2) + pow(p[0][1], 2)) * (p[2][0] - p[1][0]) + (pow(p[1][0], 2) + pow(p[1][1], 2)) * (p[0][0] - p[2][0]) + (pow(p[2][0], 2) + pow(p[2][1], 2)) * (p[1][0] - p[0][0])) / d
+    px = ux - p[0][0]
+    py = uy - p[0][1]
+    r = pow(pow(px, 2) + pow(py, 2), 0.5)
+    return circumpoints(ux, uy, r)
+
+def circumpoints(x, y, r, n=100):
+    points = []
+    for x in range(0, n + 1):
+        points.append((
+            x + (math.cos(2 * math.pi / n * x) * r),  # x
+            y + (math.sin(2 * math.pi / n * x) * r)))  # y
+    return points
+
 def pascal_row(n):
-    # This returns the nth row of Pascal's Triangle
     result = [1]
     x, numerator = 1, n
     for denominator in range(1, n//2+1):
-        # print(numerator,denominator,x)
         x *= numerator
         x /= denominator
         result.append(x)
         numerator -= 1
-    if n&1 == 0:
-        # n is even
-        result.extend(reversed(result[:-1]))
-    else:
-        result.extend(reversed(result)) 
+    if n&1 == 0: result.extend(reversed(result[:-1]))
+    else: result.extend(reversed(result)) 
     return result
 
 def slider_end_time(obj):
-    # Used to be highly innacurate when I tried doing this myself
-    # Thanks to fmang for documenting how this is found.
-    # I think it's implemented properly but still feel it's a tad bit off.
-    # TODO test some more and find issues
     timings = bmap.timing_points
     for timing in timings:
         if obj.time >= timing.time:
             t = timing
             break
-    return obj.data.distance / (100.0 * bmap.sv) * t.ms_per_beat # The actual 
+    sv_multiplier = 1.0
+    if not t.change and t.ms_per_beat < 0:
+        sv_multiplier = -100.0 / t.ms_per_beat
+    px_per_beat = bmap.sv * sv_multiplier
+    # This is influenced by the way Sunpy does it here, and it works!
+    # https://github.com/osufx/osu-parser/blob/master/osu_parser/hitobject.py#L46
+    return t.ms_per_beat * (obj.data.distance / px_per_beat) / 100 * obj.data.repetitions
 
 def slider_curve(red): # I'll work on this later to make it actually work in producing true slider paths
     if   len(red) == 2: return red
-    #elif len(red) == 3: return perfect(red) # TODO implement this
+    elif len(red) == 3: return perfect(red) # TODO test this
     else:
         bezier = make_bezier(red)
         return bezier(ts)
@@ -139,6 +159,8 @@ def createbuffer(i):
         elif obj.objtype & 1<<3 != 0: # Spinner
             if i >= obj.time and i <= obj.endtime:
                 buffer.append(obj)
+    # I think this is going to keep my life easy and allow me not to mess with anything
+    # Regarding the fact that I'm rendering 50fps using a 60fps replay
     for event in replay['replay_data']:
         if event.time >= i - 260 and event.time <= i + 10:
             buffer.append(event)
@@ -165,16 +187,19 @@ for i in range(int((bmap.hitobjects[-1].time + 2000) / 20)):
     frame = Image.new('RGBA', (552, 424), (0, 0, 0, 255))
     draw = ImageDraw.Draw(frame)
     buffer = createbuffer(i)
+    keysdone = False
     for obj in buffer:
         if isinstance(obj, replayEvent):
             x = obj.x + 20
             y = obj.y + 20
             draw.ellipse((x - 5, y - 5, x + 5, y + 5), fill=(0, 255, 205))
             # Should I try doing something better with keys?
-            if obj.keys['K1']: draw.rectangle((532,  0, 552, 20), fill=(225, 225, 225))
-            if obj.keys['K2']: draw.rectangle((532, 20, 552, 40), fill=(225, 225, 225))
-            if obj.keys['M1']: draw.rectangle((532, 40, 552, 60), fill=(225, 225, 225))
-            if obj.keys['M2']: draw.rectangle((532, 60, 552, 80), fill=(225, 225, 225))
+            if not keysdone:
+                if obj.keys['K1']: draw.rectangle((532, 172, 552, 192), fill=(225, 225, 225))
+                if obj.keys['K2']: draw.rectangle((532, 192, 552, 212), fill=(225, 225, 225))
+                if obj.keys['M1']: draw.rectangle((532, 212, 552, 232), fill=(225, 225, 225))
+                if obj.keys['M2']: draw.rectangle((532, 232, 552, 252), fill=(225, 225, 225))
+                keysdone = True
         else:
             if obj.objtype & 1<<0 != 0: # Circle
                 draw.ellipse(circlecalc(obj, cspx / 2))
