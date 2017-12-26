@@ -1,23 +1,47 @@
-#!/usr/bin/python3.5
+#!/usr/bin/python3.6
 # This script would probably be a lot better
 # If it wasn't synchronous, if you know an
 # Easy way for someone to learn to use
 # Threads, please let me know :)
-import pyttanko
+from utils.parser import parseReplay, replayEvent
+import os, sys, math, time, json, requests
 from PIL import Image, ImageDraw
-import os, sys, math, time
+from utils import pyttanko
 
 if len(sys.argv) < 2:
     sys.stderr.write("You need to provide a map to render!\n")
-    sys.exit()
+    sys.exit(1)
 else: filename = sys.argv[1]
 
-try:
-    bmap = pyttanko.parser().map(open(filename))
-    stars = pyttanko.diff_calc().calc(bmap)
-except:
-    sys.stderr.write("Sorry, pyttanko doesn't seem to like the file you gave!\n")
-    sys.exit()
+settings = json.loads(open('config.json').read())
+if settings['key'] == '':
+    sys.stderr.write('Please edit config.json with your api key!\n')
+    sys.exit(1)
+
+try: replay = parseReplay(filename)
+except: # Error catching
+    with open('errors.log', 'a') as f:
+        f.write(f'{sys.exc_info()}\n')
+    sys.stderr.write("Sorry, something went wrong!\nPlease send your errors.log to @Jamu#2893 on Discord\n")
+    sys.exit(1)
+
+# I don't expect this to ever cause an error
+bmaphash = replay['beatmap_md5']
+data = requests.get(f"https://osu.ppy.sh/api/get_beatmaps?k={settings['key']}&h={bmaphash}").json()
+if len(data) < 1:
+    sys.stderr.write('Sorry, couldn\'t download the beatmap for this replay!\n')
+    sys.exit(1)
+filename = f'beatmaps/{bmaphash}.osu'
+if not os.path.exists(filename):
+    r = requests.get(f"https://osu.ppy.sh/osu/{data[0]['beatmap_id']}", stream=True)
+    if r.response_code == 200:
+        sys.stderr.write('Sorry, couldn\'t download the beatmap for this replay!\n')
+        sys.exit(1)
+    with open(filename, 'wb') as f:
+        for chunk in r.iter_content(chunk_size=1024): 
+            if chunk: f.write(chunk)
+bmap = pyttanko.parser().map(open(filename, encoding='utf-8'))
+stars = pyttanko.diff_calc().calc(bmap, mods=replay['mods_bitwise'])
 
 # found this on reddit
 def cs_px(cs): return int(109 - 9 * cs)
@@ -118,17 +142,20 @@ def createbuffer(i):
         elif obj.objtype & 1<<3 != 0: # Spinner
             if i >= obj.time and i <= obj.endtime:
                 buffer.append(obj)
+    for event in replay['replay_data']:
+        if event.time >= i - 260 and event.time <= i + 10:
+            buffer.append(event)
     return buffer
 
 dirname = '{} - {}'.format(bmap.title, bmap.version) # this is our working directory
-if not dirname in os.listdir('.'): os.mkdir(dirname) # makes the directory if it doesn't exist
+if not dirname in os.listdir('replays/'): os.mkdir(f'replays/{dirname}') # makes the directory if it doesn't exist
 cspx = cs_px(bmap.cs)
 arms = ar_ms(bmap.ar)
 objectbuffer = [] # controlled by the checkbuffer function
 ts = [t/100.0 for t in range(101)]
 
-sys.stdout.write('{}[{}] by {}\n'.format(bmap.title, bmap.version, bmap.creator))
-sys.stdout.write('CS: {}({}px) AR: {}({}ms)\n'.format(bmap.cs, cs_px(bmap.cs), bmap.ar, ar_ms(bmap.ar)))
+sys.stdout.write(f'{bmap.title}[{bmap.version}] by {bmap.creator}\n')
+sys.stdout.write(f'CS: {bmap.cs}({cs_px(bmap.cs)}px) AR: {bmap.ar}({ar_ms(bmap.ar)}ms)\n')
 
 start = time.perf_counter()
 # Loops through the map generating a frame every 20ms
@@ -142,24 +169,34 @@ for i in range(int((bmap.hitobjects[-1].time + 2000) / 20)):
     draw = ImageDraw.Draw(frame)
     buffer = createbuffer(i)
     for obj in buffer:
-        if obj.objtype & 1<<0 != 0: # Circle
-            draw.ellipse(circlecalc(obj, cspx / 2))
-            draw.ellipse(circlecalc(obj, cspx / 2 + (cspx * .65)  * ((obj.time - i) / arms)))
-        elif obj.objtype & 1<<1 != 0: # Slider
-            draw.ellipse(circlecalc(obj, cspx / 2))
-            draw.ellipse(circlecalc(obj, max(cspx / 2 + (cspx * .65)  * ((obj.time - i) / arms), cspx / 2)))
-            points = [(obj.data.pos.x + 20, obj.data.pos.y + 20)]
-            points.extend([(int(point.split(':')[0]) + 20, int(point.split(':')[1]) + 20) for point in obj.data.points.split('|') if ':' in point])
-            segments, slider = parsePoints(points), []
-            for red in segments:
-                draw.line(slider_curve(red))
-        elif obj.objtype & 1<<3 != 0: # Spinner
-            x, y = 276, 212
-            draw.ellipse((x - 100, y - 100, x + 100, y + 100))
-    frame.save('{}/{}.png'.format(dirname, str(int(i / 20)).zfill(8)))
-    sys.stdout.write('{:>7}/{} {:.2f}% done.\r'.format(int(i), int(bmap.hitobjects[-1].time + 2000), i / int(bmap.hitobjects[-1].time + 2000) * 100))
+        if isinstance(obj, replayEvent):
+            x = obj.x + 20
+            y = obj.y + 20
+            draw.ellipse((x - 5, y - 5, x + 5, y + 5), fill=(0, 255, 205))
+            # Should I try doing something better with keys?
+            if obj.keys['K1']: draw.rectangle((532,  0, 552, 20), fill=(225, 225, 225))
+            if obj.keys['K2']: draw.rectangle((532, 20, 552, 40), fill=(225, 225, 225))
+            if obj.keys['M1']: draw.rectangle((532, 40, 552, 60), fill=(225, 225, 225))
+            if obj.keys['M2']: draw.rectangle((532, 60, 552, 80), fill=(225, 225, 225))
+        else:
+            if obj.objtype & 1<<0 != 0: # Circle
+                draw.ellipse(circlecalc(obj, cspx / 2))
+                draw.ellipse(circlecalc(obj, cspx / 2 + (cspx * .65)  * ((obj.time - i) / arms)))
+            elif obj.objtype & 1<<1 != 0: # Slider
+                draw.ellipse(circlecalc(obj, cspx / 2))
+                draw.ellipse(circlecalc(obj, max(cspx / 2 + (cspx * .65)  * ((obj.time - i) / arms), cspx / 2)))
+                points = [(obj.data.pos.x + 20, obj.data.pos.y + 20)]
+                points.extend([(int(point.split(':')[0]) + 20, int(point.split(':')[1]) + 20) for point in obj.data.points.split('|') if ':' in point])
+                segments, slider = parsePoints(points), []
+                for red in segments:
+                    draw.line(slider_curve(red))
+            elif obj.objtype & 1<<3 != 0: # Spinner
+                x, y = 276, 212
+                draw.ellipse((x - 100, y - 100, x + 100, y + 100))
+    frame.save(f'replays/{dirname}/{str(int(i / 20)).zfill(8)}.png')
+    sys.stdout.write(f'{int(i):>7}/{int(bmap.hitobjects[-1].time + 2000)} {i / int(bmap.hitobjects[-1].time + 2000) * 100:.2f}% done.\r')
 
-sys.stdout.write('Took {:.2f} seconds to finish.\n'.format(time.perf_counter() - start))
+sys.stdout.write(f'Took {time.perf_counter() - start:.2f} seconds to finish.\n')
 
 # Since I want to use PIL and have no idea how to make a video from images in python
 # Would love to learn of a way that doesn't require installing things like opencv
