@@ -34,9 +34,6 @@ if len(data) < 1:
 filename = f'beatmaps/{bmaphash}.osu'
 if not os.path.exists(filename):
     r = requests.get(f"https://osu.ppy.sh/osu/{data[0]['beatmap_id']}", stream=True)
-    if r.response_code == 200:
-        sys.stderr.write('Sorry, couldn\'t download the beatmap for this replay!\n')
-        sys.exit(1)
     with open(filename, 'wb') as f:
         for chunk in r.iter_content(chunk_size=1024): 
             if chunk: f.write(chunk)
