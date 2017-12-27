@@ -44,12 +44,19 @@ stars = pyttanko.diff_calc().calc(bmap, mods=replay['mods_bitwise'])
 replay['replay_data'].reverse()
 
 # found this on reddit
-def cs_px(cs): return int(109 - 9 * cs)
+def cs_px(cs):
+    if replay['mods']['hard_rock']: cs *= 1.3
+    elif replay['mods']['easy']: cs /= 2
+    return int(109 - 9 * cs)
 
 # math from pyttanko without the variables
 def ar_ms(ar):
+    if replay['mods']['hard_rock']: ar *= 1.4
+    elif replay['mods']['easy']: ar *= 0.5
     if ar < 5.0: arms = 1800 - 120 * ar
     else: arms = 1200 - 150 * (ar - 5)
+    if replay['mods']['double_time'] or replay['mods']['nightcore']: arms /= 3/2
+    if replay['mods']['half_time']: arms /= 3/4
     return int(arms)
 
 # bezier code from https://stackoverflow.com/questions/246525/how-can-i-draw-a-bezier-curve-using-pythons-pil
@@ -81,6 +88,11 @@ def perfect(p):
     px = ux - p[0][0]
     py = uy - p[0][1]
     r = pow(pow(px, 2) + pow(py, 2), 0.5)
+    # I need to manually do the path which is sad
+    # Because I suck at geometry and understanding it
+    # This is currently not working and will likely
+    # Need external help in fixing it, or at least
+    # Teaching me what I need to know :^)
     return circumpoints(ux, uy, r)
 
 def circumpoints(x, y, r, n=100):
@@ -109,17 +121,12 @@ def slider_end_time(obj):
         if obj.time >= timing.time:
             t = timing
             break
-    sv_multiplier = 1.0
-    if not t.change and t.ms_per_beat < 0:
-        sv_multiplier = -100.0 / t.ms_per_beat
-    px_per_beat = bmap.sv * sv_multiplier
-    # This is influenced by the way Sunpy does it here, and it works!
-    # https://github.com/osufx/osu-parser/blob/master/osu_parser/hitobject.py#L46
-    return t.ms_per_beat * (obj.data.distance / px_per_beat) / 100 * obj.data.repetitions
+    #return t.ms_per_beat * (obj.data.distance / px_per_beat) / 100 * obj.data.repetitions
+    return obj.data.distance / (100 * bmap.sv) * t.ms_per_beat
 
 def slider_curve(red): # I'll work on this later to make it actually work in producing true slider paths
     if   len(red) == 2: return red
-    elif len(red) == 3: return perfect(red) # TODO test this
+    #elif len(red) == 3: return perfect(red) # TODO make this work
     else:
         bezier = make_bezier(red)
         return bezier(ts)
@@ -144,34 +151,68 @@ def parsePoints(points):
         else: temps.append(temp)
     return temps
 
-def createbuffer(i):
+buffer = [] # This is because I can do this lol
+objindex, replayindex, lifeindex = 0, 0, 0
+def updatebuffer(i):
     # creates a new buffer containing only objects that are within the current time frame
-    # slow, is there any way to do this faster?
-    buffer = []
-    for obj in bmap.hitobjects:
-        # this *should* identify whether the object should be shown or not
+    global objindex, replayindex, buffer # Because this is needed apparently? Never experienced this before...
+    objdone, replaydone = False, False
+    # I think seperating these will use less memory? Or at least make drawing each frame faster
+    cursors, smokes = [], []
+    # this *should* identify whether the object should be shown or not
+    while not objdone:
+        if objindex >= len(bmap.hitobjects): bjdone = True; break
+        obj = bmap.hitobjects[objindex]
         if obj.objtype & 1<<0 != 0: # Circle
-            if i >= obj.time - arms and i <= obj.time:
+            if i >= (obj.time - arms) and i <= obj.time:
                 buffer.append(obj)
+                objindex += 1
+            else: objdone = True
         elif obj.objtype & 1<<1 != 0: # Slider
-            if i >= obj.time - arms and i <= obj.time + int(slider_end_time(obj)):
+            if i >= (obj.time - arms) and i <= (obj.time + int(slider_end_time(obj))):
                 buffer.append(obj)
+                objindex += 1
+            else: objdone = True
         elif obj.objtype & 1<<3 != 0: # Spinner
             if i >= obj.time and i <= obj.endtime:
                 buffer.append(obj)
+                objindex += 1
+            else: objdone = True
     # I think this is going to keep my life easy and allow me not to mess with anything
     # Regarding the fact that I'm rendering 50fps using a 60fps replay
     for event in replay['replay_data']:
+        #if replayindex >= len(replay['replay_data']): replaydone = True; break
         if event.time >= i - 260 and event.time <= i + 10:
-            buffer.append(event)
-    return buffer
+            cursors.append(event)
+        if event.keys['SM']: 
+            # I want smokes to mimick the behavior of the client but that's for later
+            # For now I'll just make it show for 2 seconds
+            if event.time >= i - 2010 and event.time <= i + 10:
+                smokes.append((event.x + 20, event.y + 20))
+    # Checks for expired objects in buffer
+    newbuffer = []
+    for obj in buffer:
+        if obj.objtype & 1<<0 != 0: # Circle
+            if i >= (obj.time - arms) and i <= obj.time:
+                newbuffer.append(obj)
+        elif obj.objtype & 1<<1 != 0: # Slider
+            if i >= (obj.time - arms) and i <= (obj.time + int(slider_end_time(obj))) :
+                newbuffer.append(obj)
+        elif obj.objtype & 1<<3 != 0: # Spinner
+            if i >= obj.time and i <= obj.endtime:
+                newbuffer.append(obj)
+    buffer = newbuffer
+    return buffer, cursors, smokes
 
 dirname = '{} - {}'.format(bmap.title, bmap.version) # this is our working directory
 if not dirname in os.listdir('replays/'): os.mkdir(f'replays/{dirname}') # makes the directory if it doesn't exist
 cspx = cs_px(bmap.cs)
 arms = ar_ms(bmap.ar)
+end_time = max([bmap.hitobjects[-1].time, replay['replay_data'][-1].time])
 objectbuffer = [] # controlled by the checkbuffer function
 ts = [t/100.0 for t in range(101)]
+evals = {'300': 300, '100': 100, '50': 50, 'miss': 0}
+evalcount = {'300': 0, '100': 0, '50': 0, 'miss': 0}
 
 sys.stdout.write(f'{bmap.title}[{bmap.version}] by {bmap.creator}\n')
 sys.stdout.write(f'CS: {bmap.cs}({cs_px(bmap.cs)}px) AR: {bmap.ar}({ar_ms(bmap.ar)}ms)\n')
@@ -182,41 +223,47 @@ start = time.perf_counter()
 # For a 60fps video it'd be (1 / 60) / (1 / 100)
 # You can probably work out why'd I'd rather stick
 # To a clean number like 20 instead
-for i in range(int((bmap.hitobjects[-1].time + 2000) / 20)):
+for i in range(int((end_time) / 20)):
     i = (i + 1) * 20
     frame = Image.new('RGBA', (552, 424), (0, 0, 0, 255))
     draw = ImageDraw.Draw(frame)
-    buffer = createbuffer(i)
+    buffer, cursors, smokes = updatebuffer(i)
     keysdone = False
     for obj in buffer:
-        if isinstance(obj, replayEvent):
-            x = obj.x + 20
-            y = obj.y + 20
-            draw.ellipse((x - 5, y - 5, x + 5, y + 5), fill=(0, 255, 205))
-            # Should I try doing something better with keys?
-            if not keysdone:
-                if obj.keys['K1']: draw.rectangle((532, 172, 552, 192), fill=(225, 225, 225))
-                if obj.keys['K2']: draw.rectangle((532, 192, 552, 212), fill=(225, 225, 225))
-                if obj.keys['M1']: draw.rectangle((532, 212, 552, 232), fill=(225, 225, 225))
-                if obj.keys['M2']: draw.rectangle((532, 232, 552, 252), fill=(225, 225, 225))
-                keysdone = True
-        else:
-            if obj.objtype & 1<<0 != 0: # Circle
-                draw.ellipse(circlecalc(obj, cspx / 2))
-                draw.ellipse(circlecalc(obj, cspx / 2 + (cspx * .65)  * ((obj.time - i) / arms)))
-            elif obj.objtype & 1<<1 != 0: # Slider
-                draw.ellipse(circlecalc(obj, cspx / 2))
-                draw.ellipse(circlecalc(obj, max(cspx / 2 + (cspx * .65)  * ((obj.time - i) / arms), cspx / 2)))
-                points = [(obj.data.pos.x + 20, obj.data.pos.y + 20)]
-                points.extend([(int(point.split(':')[0]) + 20, int(point.split(':')[1]) + 20) for point in obj.data.points.split('|') if ':' in point])
-                segments, slider = parsePoints(points), []
-                for red in segments:
-                    draw.line(slider_curve(red))
-            elif obj.objtype & 1<<3 != 0: # Spinner
-                x, y = 276, 212
-                draw.ellipse((x - 100, y - 100, x + 100, y + 100))
+        if obj.objtype & 1<<0 != 0: # Circle
+            draw.ellipse(circlecalc(obj, cspx / 2))
+            draw.ellipse(circlecalc(obj, cspx / 2 + (cspx * .65)  * ((obj.time - i) / arms)))
+        elif obj.objtype & 1<<1 != 0: # Slider
+            draw.ellipse(circlecalc(obj, cspx / 2))
+            draw.ellipse(circlecalc(obj, max(cspx / 2 + (cspx * .65)  * ((obj.time - i) / arms), cspx / 2)))
+            points = [(obj.data.pos.x + 20, obj.data.pos.y + 20)]
+            points.extend([(int(point.split(':')[0]) + 20, int(point.split(':')[1]) + 20) for point in obj.data.points.split('|') if ':' in point])
+            segments, slider = parsePoints(points), []
+            for red in segments:
+                draw.line(slider_curve(red))
+        elif obj.objtype & 1<<3 != 0: # Spinner
+            x, y = 276, 212
+            draw.ellipse((x - 100, y - 100, x + 100, y + 100))
+    # We want smoke to always be under the cursor
+    draw.line(smokes, fill=(255, 255, 0))
+    for cursor in cursors:
+        x = cursor.x + 20
+        y = cursor.y + 20
+        draw.ellipse((x - 5, y - 5, x + 5, y + 5), fill=(0, 255, 205))
+        # Should I try doing something better with keys?
+        if not keysdone:
+            if cursor.keys['K1']: draw.rectangle((532, 172, 552, 192), fill=(225, 225, 225))
+            if cursor.keys['K2']: draw.rectangle((532, 192, 552, 212), fill=(225, 225, 225))
+            if cursor.keys['M1']: draw.rectangle((532, 212, 552, 232), fill=(225, 225, 225))
+            if cursor.keys['M2']: draw.rectangle((532, 232, 552, 252), fill=(225, 225, 225))
+            keysdone = True
+    percent = i / int(end_time)
+    # Progress bar
+    draw.rectangle((0, 420, 551, 423))
+    draw.rectangle((0, 420, int(550 * percent) + 1, 423), fill=(255, 255, 255))
+    # Save the frame
     frame.save(f'replays/{dirname}/{str(int(i / 20)).zfill(8)}.png')
-    sys.stdout.write(f'{int(i):>7}/{int(bmap.hitobjects[-1].time + 2000)} {i / int(bmap.hitobjects[-1].time + 2000) * 100:.2f}% done.\r')
+    sys.stdout.write(f'{int(i):>7}/{int(end_time)} {percent * 100:.2f}% done.\r')
 
 sys.stdout.write(f'Took {time.perf_counter() - start:.2f} seconds to finish.\n')
 
@@ -224,3 +271,7 @@ sys.stdout.write(f'Took {time.perf_counter() - start:.2f} seconds to finish.\n')
 # Would love to learn of a way that doesn't require installing things like opencv
 # I'll use ffmpeg from command line for now, possibly for an indefinite amount of time.
 # ffmpeg -r 50 -f image2 -i maptitle/%08d.png -i mapaudio.mp3 -vcodec libx264 -crf 25 -pix_fmt yuv420p video.mp4
+# For DT/NC change -r 50 to -r 75 and add -filter:a "atempo=1.5" after mapaudio.mp3
+# For HT I'm guessing it's -r 37.5 (but that doesn't make sense so I'll likely need to put
+# Efforts into rendering according to rates defined by mods... oof) but for audio
+# It's the same as DT/NC, just change atempo to 0.75 xd

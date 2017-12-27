@@ -83,21 +83,12 @@ def parseReplayString(replayString):
     for record in records:
         w, x, y, z = record.split('|')
         z = int(z)
-        keys = {'M1': False, 'M2': False, 'K1': False, 'K2': False}
-        if z == 1:
-            keys['M1'] = True
-        elif z == 2:
-            keys['M2'] = True
-        elif z == 3:
-            keys['M1'] = True
-            keys['M2'] = True
-        elif z == 5:
-            keys['K1'] = True
-        elif z == 10:
-            keys['K2'] = True
-        elif z == 15:
-            keys['K1'] = True
-            keys['K2'] = True
+        keys = {'M1': False, 'M2': False, 'K1': False, 'K2': False, 'SM': False}
+        if z & 1 != 0 and z & 4 == 0: keys['M1'] = True
+        if z & 2 != 0 and z & 8 == 0: keys['M2'] = True
+        if z & 4 != 0:  keys['K1'] = True
+        if z & 8 != 0:  keys['K2'] = True
+        if z & 16 != 0: keys['SM'] = True # Smoke???
 
         time += int(w)
         if time > 0:
@@ -107,14 +98,15 @@ def parseReplayString(replayString):
     return actions
 
 def parseLifeGraph(graphString):
-    x, y = [], []
+    result = []
     life = graphString.split(',')
     for hp in life:
         if hp != '':
             pos = hp.split('|')
-            x.append(float(pos[0]))
-            y.append(float(pos[1]))
-    return (x, y)
+            x = float(pos[0])
+            y = float(pos[1])
+            result.append((x, y))
+    return result
 
 def parseReplay(filename):
     osr = open(filename, 'rb').read()
@@ -139,7 +131,7 @@ def parseReplay(filename):
     data['mods'] = parseMods(mods)
     data['mods_bitwise'] = mods
     graphString, offset = parseString(osr, offset)
-    data['life_graph'] = graphString #parseLifeGraph(graphString)
+    data['life_graph'] = parseLifeGraph(graphString)
     data['time_stamp'], offset = parseDate(osr, offset)
     data_len, offset = parseNum(osr, offset, 4)
     replay_str = str(lzma.decompress(osr[offset:offset+data_len]), 'utf-8')
