@@ -4,6 +4,7 @@
 # Easy way for someone to learn to use
 # Threads, please let me know :)
 from utils.parser import parseReplay, replayEvent
+from utils.simulation import simulate, Timing
 import os, sys, math, time, json, requests
 from PIL import Image, ImageDraw
 from utils import pyttanko
