@@ -3,34 +3,37 @@
 # If it wasn't synchronous, if you know an
 # Easy way for someone to learn to use
 # Threads, please let me know :)
+import os, sys, math, time, json, requests, numpy, imageio
 from utils.parser import parseReplay, replayEvent
 from utils.simulation import simulate, Timing
-import os, sys, math, time, json, requests
 from PIL import Image, ImageDraw
 from utils import pyttanko
 
+info  = sys.stdout.write
+error = sys.stderr.write
+
 if len(sys.argv) < 2:
-    sys.stderr.write("You need to provide a map to render!\n")
+    error("You need to provide a map to render!\n")
     sys.exit(1)
 else: filename = sys.argv[1]
 
 settings = json.loads(open('config.json').read())
 if settings['key'] == '':
-    sys.stderr.write('Please edit config.json with your api key!\n')
+    error('Please edit config.json with your api key!\n')
     sys.exit(1)
 
 try: replay = parseReplay(filename)
 except: # Error catching
     with open('errors.log', 'a') as f:
         f.write(f'{sys.exc_info()}\n')
-    sys.stderr.write("Sorry, something went wrong!\nPlease send your errors.log to @Jamu#2893 on Discord\n")
+    error("Sorry, something went wrong!\nPlease send your errors.log to @Jamu#2893 on Discord\n")
     sys.exit(1)
 
 # I don't expect this to ever cause an error
 bmaphash = replay['beatmap_md5']
 data = requests.get(f"https://osu.ppy.sh/api/get_beatmaps?k={settings['key']}&h={bmaphash}").json()
 if len(data) < 1:
-    sys.stderr.write('Sorry, couldn\'t download the beatmap for this replay!\n')
+    error('Sorry, couldn\'t download the beatmap for this replay!\n')
     sys.exit(1)
 filename = f'beatmaps/{bmaphash}.osu'
 if not os.path.exists(filename):
@@ -40,6 +43,7 @@ if not os.path.exists(filename):
             if chunk: f.write(chunk)
 bmap = pyttanko.parser().map(open(filename, encoding='utf-8'))
 stars = pyttanko.diff_calc().calc(bmap, mods=replay['mods_bitwise'])
+video = imageio.get_writer('{}-{}-{}.mp4'.format(bmap.title, bmap.version, replay['player']), fps=50)
 
 # This is to allow me to accurately draw key presses
 replay['replay_data'].reverse()
@@ -215,8 +219,8 @@ ts = [t/100.0 for t in range(101)]
 evals = {'300': 300, '100': 100, '50': 50, 'miss': 0}
 evalcount = {'300': 0, '100': 0, '50': 0, 'miss': 0}
 
-sys.stdout.write(f'{bmap.title}[{bmap.version}] by {bmap.creator}\n')
-sys.stdout.write(f'CS: {bmap.cs}({cs_px(bmap.cs)}px) AR: {bmap.ar}({ar_ms(bmap.ar)}ms)\n')
+info(f'{bmap.title}[{bmap.version}] by {bmap.creator}\n')
+info(f'CS: {bmap.cs}({cs_px(bmap.cs)}px) AR: {bmap.ar}({ar_ms(bmap.ar)}ms)\n')
 
 start = time.perf_counter()
 # Loops through the map generating a frame every 20ms
@@ -263,16 +267,12 @@ for i in range(int((end_time) / 20)):
     draw.rectangle((0, 420, 551, 423))
     draw.rectangle((0, 420, int(550 * percent) + 1, 423), fill=(255, 255, 255))
     # Save the frame
-    frame.save(f'replays/{dirname}/{str(int(i / 20)).zfill(8)}.png')
-    sys.stdout.write(f'{int(i):>7}/{int(end_time)} {percent * 100:.2f}% done.\r')
+    video.append_data(numpy.array(frame))
+    info(f'{int(i):>7}/{int(end_time)} {percent * 100:.2f}% done.\r')
 
-sys.stdout.write(f'Took {time.perf_counter() - start:.2f} seconds to finish.\n')
+info(f'Took {time.perf_counter() - start:.2f} seconds to finish.\n')
 
-# Since I want to use PIL and have no idea how to make a video from images in python
-# Would love to learn of a way that doesn't require installing things like opencv
-# I'll use ffmpeg from command line for now, possibly for an indefinite amount of time.
-# ffmpeg -r 50 -f image2 -i maptitle/%08d.png -i mapaudio.mp3 -vcodec libx264 -crf 25 -pix_fmt yuv420p video.mp4
-# For DT/NC change -r 50 to -r 75 and add -filter:a "atempo=1.5" after mapaudio.mp3
-# For HT I'm guessing it's -r 37.5 (but that doesn't make sense so I'll likely need to put
-# Efforts into rendering according to rates defined by mods... oof) but for audio
-# It's the same as DT/NC, just change atempo to 0.75 xd
+# For audio I'll have to use ffmpeg for now...
+# ffmpeg -i video.mp4 -i mapaudio.mp3 videowithaudio.mp4
+# For DT/NC change -filter:a "atempo=1.5" after mapaudio.mp3
+# For HT it's the same as DT/NC, just change atempo to 0.75 xd
