@@ -89,30 +89,43 @@ class Replay:
     replaystring: str
 
     @property
-    def Events(self):
-        self.events = np.zeros(shape=[1, 3])
-        curTime = 0
-        for event in self.replaystring.split(','):
+    def events(self):
+        index = 0
+        time = 0
+        stringlength = len(self.replaystring) - 1
+        while index < stringlength:
+            event = ''
+            while (char := self.replaystring[index]) != ',':
+                event += char
+                index += 1
+                if index >= stringlength:
+                    break
+            index += 1
             w, x, y, _ = event.split('|')
-            curTime += abs(int(w))
-            new = np.array([512 - float(x), 384 - float(y), curTime])
-            self.events = np.vstack([self.events, new])
-        return self.events
-
-    def resample(self, fps=60):
+            # -12345 has the rng seed on z, don't need it
+            if w == '-12345':
+                break
+            time += abs(int(w))
+            yield [float(x), float(y), time]
+    
+    @property
+    def frames(self):
         linear = lambda x1, x2, r: ((1 - r) * x1[0] + r * x2[0], (1 - r) * x1[1] + r * x2[1])
-        i = 0
-        t = self.events[0][2]
-        t_max = self.events[-1][2]
-        resampled = np.zeros(shape=[1, 2])
-        while t < t_max:
-            while self.events[i][2] < t:
-                i += 1
-            dt1 = t - self.events[i - 1][2]
-            dt2 = self.events[i][2] - self.events[i - 1][2]
-            inter = linear(self.events[i - 1][:2], self.events[i][:2],
-                           dt1 / dt2)
-            new = np.array([*inter])
-            resampled = np.vstack([resampled, new])
-            t += 1000 / fps
-        return resampled
+        events = self.events
+        prevent = next(events)
+        time = prevent[2]
+        window = []
+        while event := next(events, False):
+            while event[2] < time:
+                prevent = event
+                if event := next(events, False):
+                    break
+            dt1 = time - prevent[2]
+            dt2 = event[2] - prevent[2]
+            time += 1000 / 60
+            window.append(linear(prevent, event, dt1 / dt2))
+            window = window[-5:]
+            yield window
+
+    def __repr__(self):
+        return f'{self.username} - {self.replayhash} ({self.timestamp})'
