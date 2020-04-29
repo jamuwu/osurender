@@ -1,92 +1,53 @@
 from struct import unpack_from, calcsize
 from dataclasses import dataclass
-import numpy as np
 import lzma, math
 
+class Replay:
+    def __init__(self, path):
+        with open(path, 'rb') as f:
+            self.data = f.read()
+        self.offset = 0
+        self.mode, self.version = self.unpack('<bi')
+        self.beatmaphash = self._str()
+        self.username = self._str()
+        self.replayhash = self._str()
+        stats = self.unpack('<hhhhhhih?i')
+        self.n300, self.n100, self.n50, self.gekis = stats[0:4]
+        self.katus, self.nmiss, self.score, self.combo = stats[4:8]
+        self.perfect, self.mods = stats[8:10]
+        self.lifebar = self._str()
+        self.timestamp, self.replaylength = self.unpack('<qi')
+        offsetend = self.offset + self.replaylength
+        self.replaystring = lzma.decompress(self.data[self.offset:offsetend]).decode('ascii')[:-1]
+        self.offset = offsetend
+    
+    def unpack(self, b):
+        unpacked = unpack_from(b, self.data, self.offset)
+        self.offset += calcsize(b)
+        return unpacked
 
-def parse(filename):
-    with open(filename, 'rb') as f:
-        return Replay(*_parse(f.read()))
-
-
-def _parse(data):
-    global offset
-    offset = 0
-
-    def _dec():
-        global offset
+    def _dec(self):
         stringLength = 0
         shift = 0
         while True:
-            byte = data[offset]
-            offset += 1
+            byte = self.data[self.offset]
+            self.offset += 1
             stringLength += (byte & 0b01111111) << shift
             if byte & 0b10000000 == 0x00:
                 break
             shift += 7
         return stringLength
 
-    def _str():
-        global offset
-        if data[offset] == 0x00:
-            offset += 1
-        elif data[offset] == 0x0b:
-            offset += 1
-            stringLength = _dec()
-            offsetEnd = offset + stringLength
-            string = data[offset:offsetEnd].decode('utf-8')
-            offset += stringLength
+    def _str(self):
+        if self.data[self.offset] == 0x00:
+            self.offset += 1
+        elif self.data[self.offset] == 0x0b:
+            self.offset += 1
+            stringLength = self._dec()
+            offsetEnd = self.offset + stringLength
+            string = self.data[self.offset:offsetEnd].decode('utf-8')
+            self.offset += stringLength
             return string
-
-    # Game mode and game version
-    gameMode, gameVersion = unpack_from('<bi', data, offset)
-    offset += calcsize('<bi')
-    # Beatmap hash
-    bmapHash = _str()
-    # Player username
-    username = _str()
-    # Replay hash
-    replayHash = _str()
-    # Unpacking score stats
-    n300, n100, n50, gekis, katus, nmiss, score, maxCombo, perfect, mods = unpack_from(
-        '<hhhhhhih?i', data, offset)
-    offset += calcsize('<hhhhhhih?i')
-    # Life bar
-    lifeBar = _str()
-    # Replay timestamp and replay length
-    timestamp, replayLength = unpack_from('<qi', data, offset)
-    offset += calcsize('<qi')
-    # Replay string
-    offsetEnd = offset + replayLength
-    replayString = lzma.decompress(data[offset:offsetEnd]).decode('ascii')[:-1]
-    offset = offsetEnd
-
-    return (gameMode, gameVersion, bmapHash, replayHash, username, n300, n100,
-            n50, gekis, katus, nmiss, score, maxCombo, perfect, mods, lifeBar,
-            timestamp, replayLength, replayString)
-
-
-@dataclass
-class Replay:
-    mode: int
-    version: int
-    beatmaphash: str
-    replayhash: str
-    username: str
-    n300: int
-    n100: int
-    n50: int
-    gekis: int
-    katus: int
-    nmiss: int
-    score: int
-    combo: int
-    perfect: bool
-    mods: int
-    lifebar: str
-    timestamp: int
-    replaylength: int
-    replaystring: str
 
     @property
     def events(self):

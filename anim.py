@@ -1,19 +1,15 @@
 from PIL import Image, ImageDraw
 import sys, time, imageio
-from osr import parse
+from osr import Replay
 import numpy as np
 
 def render(path):
     start = time.time()
-    r = parse(path)
+    r = Replay(path)
 
     video = imageio.get_writer(f'{r.username}-{r.timestamp}-{r.replayhash}.mp4', fps=60)
 
-    i = 0
-
     for frame in r.frames:
-        i += 1
-        print(f'Writing frame #{i}')
         img = Image.new('RGBA', (552, 424), (0, 0, 0, 255))
         draw = ImageDraw.Draw(img)
 
